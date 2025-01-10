@@ -159,6 +159,16 @@ Breakthrough::Breakthrough(std::string _displayName, std::vector<Component> _com
 
 void Breakthrough::initialize()
 {
+  // Hassan: Initializing vectors to store dummy values and node wall values
+  P_dum = std::vector <double> (Ngrid+1, 0.0);
+  y_dum = std::vector <double> ((Ngrid+1)*Ncomp, 0.0);
+  T_dum = std::vector <double> (Ngrid+1, 0.0);
+
+  // The size is Ngrid+1 because these vectors store the values of outlet (right wall of Ngrid node as well)
+  Ph = std::vector <double> (Ngrid+1, 0.0);
+  yh = std::vector <double> ((Ngrid+1)*Ncomp, 0.0);
+  Th = std::vector <double> (Ngrid+1, 0.0);
+  
   // Hassan Properties and Parameters
   K_z = 0.09;                        
   C_ps = 750.0;                      
@@ -194,29 +204,49 @@ void Breakthrough::initialize()
   std::fill(T.begin(), T.end(), T_gas/T_gas);   // Equal to T_gas
   std::fill(y.begin(), y.end(), 0.0);
 
+  // set the molefraction of the carrier gas equal to 1.0, as column is initially filled with carrier gas only.
+  // for the column except for the entrance (i=0)
+  for(size_t i = 1; i < Ngrid + 1; ++i)
+  {
+    y[i * Ncomp + carrierGasComponent] = 1.0;
+  }
+
   // initial pressure along the column
   std::vector<double> pt_init(Ngrid + 1);
 
   // set the initial total pressure along the column assuming the pressure gradient is constant
-  for(size_t i = 0; i < Ngrid + 1; ++i)
+  // for(size_t i = 0; i < Ngrid + 1; ++i)
+  // {
+    // pt_init[i] = (p_total + dptdx * static_cast<double>(i) * dx*L) / p_total;
+    // pt_init[i] = (p_total - dptdx * static_cast<double>(Ngrid-i) * dx*L) / p_total;
+  // }
+
+  // Pressure Profile initialization based on Ergun equation
+  double sum_y;
+  double vis_term = 150.0 * mu * std::pow((1-epsilon), 2) 
+                    / 4.0 / std::pow(r_p, 2) / std::pow(epsilon, 2);
+
+  pt_init[Ngrid] = p_total/p_total;
+  for(size_t i = Ngrid-1; i >= 1; --i)
   {
-    pt_init[i] = (p_total + dptdx * static_cast<double>(i) * dx*L) / p_total;
+    sum_y = 0.0;
+    for(size_t j = 0; j < Ncomp; ++j)
+    {
+      sum_y += y[i * Ncomp + j] * MW[j];
+    } 
+    pt_init[i] = ((vis_term*v_in*dx*L/p_total) + pt_init[i+1]) 
+          / (1.0 - (dx*L/R/T[i]/T_gas)*sum_y*((1.75*(1-epsilon))/2.0/r_p/epsilon)*std::pow(v_in, 2.0));
   }
+  // For 1st node half cell approximation
+  pt_init[0] = ((vis_term*v_in*dx/2.0*L/p_total) + pt_init[1]) 
+        / (1.0 - (dx/2.0*L/R/T[0]/T_gas)*sum_y*((1.75*(1-epsilon))/2.0/r_p/epsilon)*std::pow(v_in, 2.0));
 
   // initialize the interstitial gas velocity in the column
   for(size_t i = 0; i < Ngrid + 1; ++i)
   {
     // V[i] = v_in * p_total / pt_init[i];
     // V[i] = (v_in * 1 / pt_init[i]) / v_in;
-    V[i] = 0.0;
-  }
-  V[0] = v_in/v_in;
-
-  // set the molefraction of the carrier gas equal to 1.0, as column is initially filled with carrier gas only.
-  // for the column except for the entrance (i=0)
-  for(size_t i = 1; i < Ngrid + 1; ++i)
-  {
-    y[i * Ncomp + carrierGasComponent] = pt_init[i]/pt_init[i];
+    V[i] = v_in/v_in;
   }
 
   // at the column entrance, the mol-fractions of the components in the gas phase are fixed
@@ -262,11 +292,6 @@ void Breakthrough::initialize()
 
   for(size_t i = 0; i < Ngrid + 1; ++i)
   {
-    // Pt[i] = 0.0;
-    // for(size_t j = 0; j < Ncomp; ++j)
-    // {
-    //   Pt[i] += std::max(0.0, P[i * Ncomp + j]);
-    // }
     // Initial pressure profile is same as pt_init
     P[i] += std::max(pt_init[i], 0.0);
   }
@@ -401,7 +426,7 @@ void Breakthrough::computeStep(size_t step)
   // ======================================================================
 
   // calculate the derivatives Dq/dt and Dp/dt based on Qeq, Q, V, and P
-  computeFirstDerivatives(Dqdt, DPdt, DTdt, Dydt, Qeq, Q, V, P, T, y);
+  computeFirstDerivatives(Dqdt, DPdt, DTdt, Dydt, Qeq, Q, P, T, y);
 
   // Dqdt and Dpdt are calculated at old time step
   // make estimate for the new loadings and new gas phase partial pressures
@@ -431,20 +456,20 @@ void Breakthrough::computeStep(size_t step)
   }
 
   computeEquilibriumLoadings();
-  for (size_t i; i<Ngrid+1; ++i)
+  for (size_t i = 0; i<Ngrid+1; ++i)
   {
     if (Pnew[i]<=0.0){
       throw std::runtime_error("Error: Pressure becoming zero\n"); 
     }
   }
-  computeVelocity();
+  // computeVelocity();
 
   // SSP-RK Step 2
   // ======================================================================
 
   // calculate new derivatives at new (current) timestep
   // calculate the derivatives Dq/dt and Dp/dt based on Qeq, Q, V, and P at new (current) timestep
-  computeFirstDerivatives(Dqdtnew, DPdtnew, DTdtnew, Dydtnew,  Qeqnew, Qnew, Vnew, Pnew, Tnew, ynew);
+  computeFirstDerivatives(Dqdtnew, DPdtnew, DTdtnew, Dydtnew, Qeqnew, Qnew, Pnew, Tnew, ynew);
 
   for (size_t i = 0; i < Ngrid + 1; ++i)
   {
@@ -470,20 +495,20 @@ void Breakthrough::computeStep(size_t step)
 
   computeEquilibriumLoadings();
 
-  for (size_t i; i<Ngrid+1; ++i)
+  for (size_t i = 0; i<Ngrid+1; ++i)
   {
     if (Pnew[i]<=0.0){
       throw std::runtime_error("Error: Pressure becoming zero\n"); 
     }
   }
-  computeVelocity();
+  // computeVelocity();
 
   // SSP-RK Step 3
   // ======================================================================
 
   // calculate new derivatives at new (current) timestep
   // calculate the derivatives Dq/dt and Dp/dt based on Qeq, Q, V, and P at new (current) timestep
-  computeFirstDerivatives(Dqdtnew, DPdtnew, DTdtnew, Dydtnew,  Qeqnew, Qnew, Vnew, Pnew, Tnew, ynew);
+  computeFirstDerivatives(Dqdtnew, DPdtnew, DTdtnew, Dydtnew,  Qeqnew, Qnew, Pnew, Tnew, ynew);
 
   for (size_t i = 0; i < Ngrid + 1; ++i)
   {
@@ -511,13 +536,13 @@ void Breakthrough::computeStep(size_t step)
 
   computeEquilibriumLoadings();
 
-  for (size_t i; i<Ngrid+1; ++i)
+  for (size_t i = 0; i<Ngrid+1; ++i)
   {
     if (Pnew[i]<=0.0){
       throw std::runtime_error("Error: Pressure becoming zero \n"); 
     }
   }
-  computeVelocity();
+  // computeVelocity();
   
   
   // update to the new time step
@@ -527,6 +552,7 @@ void Breakthrough::computeStep(size_t step)
   std::copy(Qeqnew.begin(), Qeqnew.end(), Qeq.begin());
   std::copy(ynew.begin(), ynew.end(), y.begin());
   std::copy(Vnew.begin(), Vnew.end(), V.begin());
+  // P[0] = P_dum[0];      // Updating the inlet pressure as calculated using Ergun equation
 
   // pulse boundary condition
   if (pulse == true)
@@ -624,31 +650,18 @@ void Breakthrough::computeFirstDerivatives(std::vector<double> &dqdt,
                                            std::vector<double> &dydt,
                                            const std::vector<double> &q_eq,
                                            const std::vector<double> &q,
-                                           const std::vector<double> &v,
                                            const std::vector<double> &p,
-                                          //  const std::vector<double> &T_arg,
-                                          //  const std::vector<double> &y_arg)
-                                          const std::vector<double> &Temp,
+                                           const std::vector<double> &T_vec,
                                            const std::vector<double> &y_vec)
 {
   double idx = 1.0 / dx;
   double idx2 = 1.0 / (dx * dx);
-
-  // The following variables have already been initialized in the initialize function
-  // double K_z = 0.09;                        // Thermal conductivity of gas [J/mol/K]
-  // double C_ps = 750.0;                      // Heat capacity of adsorbent [J/kg/K]
-  // double C_pg = 35.8;                       // Heat capacity of gas [J/mol/K]
-  // double C_pa = 35.8;                       // Heat capacity of adsorbate [J/mol/K]
-  // double mu = 1.13e-05;                     // Viscoisty of gas [Pa.s]
-  // double r_p = 5.0e-03;                     // Radius of adsorbent particles [m]  
   
   // %%%%%%%%%%%%%%%%%%%% Variables required for balances equations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   std::vector <double> ro_g(Ngrid+1);
   std::vector <double> sink_term(Ngrid+1);
-  std::vector <double> kinetic_term(Ngrid+1);
-  std::vector <double> p_dum(Ngrid+1);
-  // std::vector <double> Temp(Ngrid+1);
-  // std::vector <double> y_vec(Ngrid+1);
+  double vis_term;
+  std::vector <double> kinetic_term_h(Ngrid+1);
 
   // Variables for finite differences
   std::vector <double> dTdx(Ngrid+1, 0.0);
@@ -658,102 +671,180 @@ void Breakthrough::computeFirstDerivatives(std::vector<double> &dqdt,
   std::vector <double> PvT(Ngrid+1, 0.0);
   std::vector <double> Pv(Ngrid+1, 0.0);
   std::vector <double> dPdx(Ngrid+1, 0.0);
+  std::vector <double> dPdxh(Ngrid+1, 0.0);
+  double dyPVT;
+
+  // Velocity vector storing values as calculated using Ergun equation
+  std:: vector <double> v(Ngrid+1, 0.0);
   
+  // Variables for balance equations
   double phi = R*rho_p*Q_s0*T_gas*(1-epsilon)/epsilon/p_total;
   double dTdt1, dTdt2, dTdt3;
   double dPdt1, dPdt2, dPdt3;
   double dydt1, dydt2, dydt3;
+  double sum_q, sum_y;
+  double res_dqdt;
+  int v_sign;
 
-  std::copy(p.begin(), p.end(), p_dum.begin());
-  // std::copy(y_arg.begin(), y_arg.end(), y_vec.begin());
-  // std::copy(T_arg.begin(), T_arg.end(), Temp.begin());
+  //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Process Variables Retrieval %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  std::copy(p.begin(), p.end(), P_dum.begin());
+  std::copy(y_vec.begin(), y_vec.end(), y_dum.begin());
+  std::copy(T_vec.begin(), T_vec.end(), T_dum.begin());
 
-  // Calculation of variable properties
-  double sum_q; 
+  //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Calculation of variable properties %%%%%%%%%%%%%%%%%%%%%%
+  vis_term = 150.0 * mu * std::pow((1-epsilon), 2) 
+                    / 4.0 / std::pow(r_p, 2) / std::pow(epsilon, 2);
+
   for(size_t i = 0; i < Ngrid+1; i++)
   {
     sum_q = 0.0;
     for(size_t j = 0; j < Ncomp; ++j)
     {
-      sum_q += q[i * Ncomp + j];      // Sum of adsorbent loading
+      sum_q += q[i * Ncomp + j];                // Sum of adsorbent loading
     }
-    ro_g[i] = (p_dum[i]*p_total) / R / Temp[i] / T_gas;
+    ro_g[i] = (P_dum[i]*p_total) / R / T_dum[i] / T_gas;
     sink_term[i] = (1 - epsilon) * (rho_p*C_ps + rho_p*sum_q*C_pa)
                   + (epsilon*ro_g[i]*C_pg);
   }
 
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Inlet Boundary Pressure correction %%%%%%%%%%%%%%
-  
-  double vis_term = 150.0 * mu * std::pow((1-epsilon), 2) 
-                    / 4.0 / std::pow(r_p, 2) / std::pow(epsilon, 2);
-
-  double sum = 0.0;
+  sum_y = 0.0;
   for(size_t j = 0; j < Ncomp; ++j)
   {
-    sum += (MW[j] * y_vec[0 * Ncomp + j]);
+    sum_y += (MW[j] * y_dum[0 * Ncomp + j]);    // sum of molar masses at the inlet node
   }
   
-  // Calculate Inlet pressure using inlet velocity and 2nd grid point pressure
-  // based on Ergun's equation
-  // p_dum[0] = p_dum[1] + (vis_term*v_in + kinetic_term[1]*std::pow(v_in, 2.0))*dx;
-  p_dum[0] = ((vis_term*v_in*dx*L/p_total) + p_dum[1]) 
-          / (1.0 - (dx*L/R/Temp[0]/T_gas)*sum*((1.75*(1-epsilon))/2.0/r_p/epsilon)*std::pow(v_in, 2.0));
-  if (p_dum[p_dum.size()-1] > p_dum[p_dum.size()-2]){
-    p_dum[p_dum.size()-1] = p_dum[p_dum.size()-2];
+  // Inlet pressure is calculated using inlet velocity and 2nd grid point pressure based on Ergun's equation
+  // Half cell approximation will be used to get the pressure at the inlet node (x=0)
+  P_dum[0] = ((vis_term*v_in*dx/2.0*L/p_total) + P_dum[1]) 
+          / (1.0 - (dx/2.0*L/R/T_dum[0]/T_gas)*sum_y*((1.75*(1-epsilon))/2.0/r_p/epsilon)*std::pow(v_in, 2.0));
+
+  // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% WENO Values Calculation  %%%%%%%%%%%%%%%%%%%%%%%%
+  // Ph = compute_WENO(P_dum, true);
+  // Th = compute_WENO(T_dum, false);
+
+  // Ph = compute_TVD(P_dum, true);
+  // Th = compute_TVD(T_dum, false);
+
+  Ph = compute_UDS(P_dum, true);
+  Th = compute_UDS(T_dum, false);
+
+  std::vector <double> y_comp_dum(Ngrid+1, 0.0);   // Vector to store values for individual component mole fraction
+  std::vector <double> yh_comp_dum(Ngrid+1, 0.0);  // Vector to store values for WENO calculation
+
+  // Component vector WENO calculation 
+  for (size_t j=0; j<Ncomp; ++j)
+  {
+    for (size_t i=0; i<Ngrid+1; ++i)
+    {
+      y_comp_dum[i] = y_dum[i * Ncomp + j]; 
+    }
+    // Now calculate WENO based values
+    // yh_comp_dum = compute_WENO(y_comp_dum, false);
+    // yh_comp_dum = compute_TVD(y_comp_dum, false);
+    yh_comp_dum = compute_UDS(y_comp_dum, false);
+    
+    // Assigning the calculated WENO values to yh vector
+    for (size_t i=0; i<Ngrid+1; ++i)
+    {
+      yh[i * Ncomp + j] = yh_comp_dum[i]; 
+    }
+  }
+  
+  // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Velocity Calculation using Ergun equation %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  // Calculate property values at the node walls using WENO calculated values
+  for(size_t i = 0; i < Ngrid+1; i++)
+  {
+    sum_y = 0.0;
+    for(size_t j = 0; j < Ncomp; ++j)
+    {
+      sum_y += (MW[j] * yh[i * Ncomp + j]);  // Sum of molar masses
+    }
+    ro_g[i] = (Ph[i]*p_total) / R / Th[i] / T_gas;   // Gas Density based on wall values
+    kinetic_term_h[i] = (ro_g[i] * sum_y) * (1.75*(1-epsilon)) / 2.0 / r_p / epsilon;
   }
 
-  // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% BC Check %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-  // BCs check (This check ensures that variables at the boundary, also implemented in MATLAB code)
-  // In order to do that I need modifiable copy of vectors y_vec and Temp. Unfotunately, if I am initializing those copies within this function,...
-  // I get the C++ error : free(): invalid pointer ...
-  // I am a new to C++ and trying to address this issue. 
-  // Thanks
-
-  // for(size_t j = 0; j < Ncomp; ++j)
-  // {
-  //   y_vec[Ngrid * Ncomp + j] = y_vec[Ngrid-1 * Ncomp + j];
-  // }
-  // Temp[Ngrid] = Temp[Ngrid-1];
-  p_dum[Ngrid] = p_dum[Ngrid-1];
-
-  if (p_dum[Ngrid-1] >= 1.0){
-    p_dum[Ngrid] = 1.0;
-  }else{
-    p_dum[Ngrid] = p_dum[Ngrid-1];
+  // Pressure Gradient calculation at the walls 
+  dPdxh[0] = 2.0 * (P_dum[1] - P_dum[0]) * idx;           // Inlet grid point using half cell approximation
+  for(size_t i = 1; i < Ngrid; ++i)
+  {
+    dPdxh[i] = (P_dum[i+1] - P_dum[i]) * idx;
   }
+  dPdxh[Ngrid] = 2.0 * (Ph[Ngrid] - P_dum[Ngrid]) * idx;  // Outlet grid point using half cell approximation
+
+  // Calculate Velocity based on Ergun's equation
+  v[0] = v_in/v_in;     // first grid point
+  
+  for(size_t i = 1; i < Ngrid+1; ++i)
+  {  
+    if (dPdxh[i] <= 0.0)
+    {
+      v_sign = 1;
+    }
+    else
+    {
+      v_sign = -1;
+    }
+    
+    v[i] = v_sign * (-vis_term + std::pow(
+              (std::abs(std::pow(vis_term, 2) + 4.0 * kinetic_term_h[i] * std::abs(dPdxh[i]*p_total/L))), 0.5))
+              / 2.0 / kinetic_term_h[i] / v_in;
+    if (std::isnan(v[i]))
+    {
+      std::cout << "Nan encountered" << std::endl;
+    }
+  }
+
+  // Copying calculated velocities to Vnew vector
+  std::copy(v.begin(), v.end(), Vnew.begin());
 
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Finite Difference Calculation %%%%%%%%%%%%%%%%%%%
-  // First order differences
+  // First order differences based on WENO calculated values
   for(size_t i = 1; i < Ngrid+1; i++)
   {
     for(size_t j = 0; j < Ncomp; ++j)
     {
-      dydx[i * Ncomp + j] = (y_vec[i * Ncomp + j] - y_vec[(i-1) * Ncomp + j]) * idx;
+      // dydx[i * Ncomp + j] = (y_dum[i * Ncomp + j] - y_dum[(i-1) * Ncomp + j]) * idx;
+      dydx[i * Ncomp + j] = (yh[i * Ncomp + j] - yh[(i-1) * Ncomp + j]) * idx;
     }
-    dTdx[i] = (Temp[i] - Temp[i-1]) * idx;
-    dPdx[i] = (p_dum[i] - p_dum[i-1]) * idx;
+    // dTdx[i] = (T_dum[i] - T_dum[i-1]) * idx;
+    dTdx[i] = (Th[i] - Th[i-1]) * idx;
+    
+    // Calculating the dPdz based on WENO Ph
+    // dPdx[i] = (P_dum[i] - P_dum[i-1]) * idx;
+    dPdx[i] = (Ph[i] - Ph[i-1]) * idx;
 
-    Pv[i] = (p_dum[i]*v[i] - p_dum[i-1]*v[i-1]) * idx;
-    PvT[i] = (p_dum[i]*v[i]/Temp[i] - p_dum[i-1]*v[i-1]/Temp[i-1]) * idx;
+    // Pv[i] = (P_dum[i]*v[i] - P_dum[i-1]*v[i-1]) * idx;
+    // PvT[i] = (P_dum[i]*v[i]/T_dum[i] - P_dum[i-1]*v[i-1]/T_dum[i-1]) * idx;
+    Pv[i] = (Ph[i]*v[i] - Ph[i-1]*v[i-1]) * idx;
+    PvT[i] = (Ph[i]*v[i]/Th[i] - Ph[i-1]*v[i-1]/Th[i-1]) * idx;
   }
 
   // Second order differences
-  for(size_t i = 1; i < Ngrid; i++)     // For middle nodes
+  // For 1st node, the differences have been calculated using half-cell approximations
+  for(size_t j = 0; j < Ncomp; ++j)
+  {
+    d2ydx2[1 * Ncomp + j] = (y_dum[2 * Ncomp + j] - 3.0*y_dum[1 * Ncomp + j] + 2.0*y_dum[0 * Ncomp + j]) * idx2;
+  }
+  d2Tdx2[1] = (T_dum[2] - 3.0*T_dum[1] + 2.0*T_dum[0]) * idx2;
+
+  // For middle nodes
+  for(size_t i = 2; i < Ngrid; i++)
   {
     for(size_t j = 0; j < Ncomp; ++j)
     {
-      d2ydx2[i * Ncomp + j] = (y_vec[(i+1) * Ncomp + j] - 2.0*y_vec[i * Ncomp + j] + y_vec[(i-1) * Ncomp + j]) * idx2;
+      d2ydx2[i * Ncomp + j] = (y_dum[(i+1) * Ncomp + j] - 2.0*y_dum[i * Ncomp + j] + y_dum[(i-1) * Ncomp + j]) * idx2;
     }
     
-    d2Tdx2[i] = (Temp[i+1] - 2.0*Temp[i] + Temp[i-1]) * idx2;
+    d2Tdx2[i] = (T_dum[i+1] - 2.0*T_dum[i] + T_dum[i-1]) * idx2;
   }
 
   // For last node
   for(size_t j = 0; j < Ncomp; ++j)
   {
-    d2ydx2[Ngrid * Ncomp + j] = (y_vec[(Ngrid-1) * Ncomp + j] - y_vec[Ngrid * Ncomp + j]) * idx2;
+    d2ydx2[Ngrid * Ncomp + j] = (y_dum[(Ngrid-1) * Ncomp + j] - y_dum[Ngrid * Ncomp + j]) * idx2;
   }
-  d2Tdx2[Ngrid] = (Temp[Ngrid-1] - Temp[Ngrid]) * idx2;
+  d2Tdx2[Ngrid] = (T_dum[Ngrid-1] - T_dum[Ngrid]) * idx2;
   
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Balance equations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   // first/inlet  gridpoint, the conditions remains same
@@ -762,11 +853,12 @@ void Breakthrough::computeFirstDerivatives(std::vector<double> &dqdt,
   for(size_t j = 0; j < Ncomp; ++j)
   {
     dydt[0 * Ncomp + j] = 0.0;
-    dqdt[0 * Ncomp + j] = (components[j].Kl * L/v_in) * (q_eq[0 * Ncomp + j]/Q_s0 - q[0 * Ncomp + j]);
+    // dqdt[0 * Ncomp + j] = (components[j].Kl * L/v_in) * (q_eq[0 * Ncomp + j]/Q_s0 - q[0 * Ncomp + j]);
+    dqdt[0 * Ncomp + j] = 0.0;
   }
   
-  // middle gridpoints 
-  for(size_t i = 1; i < Ngrid; i++)
+  // middle gridpoint and Ngrid node
+  for(size_t i = 1; i < Ngrid+1; i++)
   {
     // %%%%%%%%%%%%%%%%%%%%%%% Solid mass balance %%%%%%%%%%%%%%%%%%%%%%%%%%
     for(size_t j = 0; j < Ncomp; ++j)
@@ -774,9 +866,9 @@ void Breakthrough::computeFirstDerivatives(std::vector<double> &dqdt,
       dqdt[i * Ncomp + j] = (components[j].Kl * L/v_in) * (q_eq[i * Ncomp + j]/Q_s0 - q[i * Ncomp + j]);
     }
     
-    // %%%%%%%%%%%%%%%%%%%%%%%%% Temperature balance %%%%%%%%%%%%%%%%%%%%%%%%
+    // %%%%%%%%%%%%%%%%%%%%%%%%% Energy balance %%%%%%%%%%%%%%%%%%%%%%%%
     dTdt1 = K_z/v_in/L * d2Tdx2[i] / sink_term[i];
-    dTdt2 = -(epsilon*C_pg*p_total/R/T_gas) * (Pv[i] - Temp[i]*PvT[i]) / sink_term[i];
+    dTdt2 = -(epsilon*C_pg*p_total/R/T_gas) * (Pv[i] - T_dum[i]*PvT[i]) / sink_term[i];
     
     dTdt3 = 0.0; 
     for(size_t j = 0; j < Ncomp; ++j)
@@ -789,30 +881,31 @@ void Breakthrough::computeFirstDerivatives(std::vector<double> &dqdt,
 
     // %%%%%%%%%%%%%%%%%%%%%%%%% Total Pressure  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     
-    dPdt1 = -Temp[i] * PvT[i];
-    dPdt2 = p_dum[i] * dTdt[i] / Temp[i];
+    dPdt1 = -T_dum[i] * PvT[i];
+    dPdt2 = P_dum[i] * dTdt[i] / T_dum[i];
 
     dPdt3 = 0.0; 
     for(size_t j = 0; j < Ncomp; ++j)
     {
-      dPdt3 += -phi * Temp[i] * dqdt[i * Ncomp + j];
+      dPdt3 += -phi * T_dum[i] * dqdt[i * Ncomp + j];
     }
 
     dpdt[i] = dPdt1 + dPdt2 + dPdt3;
     
     // %%%%%%%%%%%%%%%%%%%%%%%%%% Mole balance %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     // For all components except carrier gas
+    dyPVT = 0.0;
     for(size_t j = 1; j < Ncomp; ++j)
     {
-      double dyPVT;
-      dyPVT = ((y_vec[i * Ncomp + j]*p_dum[i]*v[i]/Temp[i]) 
-              - (y_vec[(i-1) * Ncomp + j]*p_dum[i-1]*v[i-1]/Temp[i-1])) * idx; 
-      dydt1 = - (Temp[i]/p_dum[i]) * (dyPVT - y_vec[i * Ncomp + j]*PvT[i]);
+      dyPVT = ((yh[i * Ncomp + j]*Ph[i]*v[i]/Th[i]) 
+              - (yh[(i-1) * Ncomp + j]*Ph[i-1]*v[i-1]/Th[i-1])) * idx;
+
+      dydt1 = - (T_dum[i]/P_dum[i]) * (dyPVT - y_dum[i * Ncomp + j]*PvT[i]);
       
       dydt2 = (components[j].D/L/v_in) * (d2ydx2[i * Ncomp + j] 
-                                + (dPdx[i]*dydx[i * Ncomp + j])/p_dum[i] 
-                                - (dTdx[i]*dydx[i * Ncomp + j])/Temp[i]);
-      double res_dqdt = 0.0;
+                                + (dPdx[i]*dydx[i * Ncomp + j])/P_dum[i] 
+                                - (dTdx[i]*dydx[i * Ncomp + j])/T_dum[i]);
+      res_dqdt = 0.0;
       for(size_t k = 0; k < Ncomp; ++k)
       {
         if (k != j)
@@ -821,136 +914,159 @@ void Breakthrough::computeFirstDerivatives(std::vector<double> &dqdt,
         }
       }
 
-      dydt3 = phi * Temp[i] / p_dum[i]
-              * ((y_vec[i * Ncomp + j] - 1)*dqdt[i * Ncomp + j]
-              + y_vec[i * Ncomp + j] * res_dqdt);
+      dydt3 = phi * T_dum[i] / P_dum[i]
+              * ((y_dum[i * Ncomp + j] - 1.0)*dqdt[i * Ncomp + j]
+              + y_dum[i * Ncomp + j] * res_dqdt);
       
       dydt[i * Ncomp + j] = dydt1 + dydt2 + dydt3;
     }
   }
-  // Outlet gridpoints 
-  // %%%%%%%%%%%%%%%%%%%%%%% Solid mass balance %%%%%%%%%%%%%%%%%%%%%%%%%%
-  for(size_t j = 0; j < Ncomp; ++j)
-  {
-    dqdt[Ngrid * Ncomp + j] = (components[j].Kl * L/v_in) * (q_eq[Ngrid * Ncomp + j]/Q_s0 - q[Ngrid * Ncomp + j]);
-  }
-  
-  // %%%%%%%%%%%%%%%%%%%%%%%%% Temperature balance %%%%%%%%%%%%%%%%%%%%%%%%
-  dTdt[Ngrid] = dTdt[Ngrid-1];
-
-  // %%%%%%%%%%%%%%%%%%%%%%%%% Total Pressure  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-  dpdt[Ngrid] = dpdt[Ngrid-1];
-  
-  // %%%%%%%%%%%%%%%%%%%%%%%%%% Mole balance %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-  // For all components except carrier gas
-  for(size_t j = 1; j < Ncomp; ++j)
-  {
-    dydt[Ngrid * Ncomp + j] = dydt[(Ngrid-1) * Ncomp + j];
-  }
 }
 
-// calculate new velocity Vnew from Qnew, Qeqnew, Pnew, Pt
-void Breakthrough::computeVelocity()
+// Function to calculate UDS based values at node walls
+std::vector <double> Breakthrough::compute_UDS(std::vector <double> &my_vec, bool is_pressure)
 {
-  double idx = 1.0 / dx;
-  // double mu = 1.13e-05;
-  // double r_p = 5.0e-03;
+  // Vector to store computed values at the wall, the size of the vector is (Ngrid+1), including inlet and outlet. 
+  std::vector <double> my_vec_out(Ngrid+1, 0.0);
 
-  double vis_term = 150.0 * mu * std::pow((1-epsilon), 2) 
-                    / 4.0 / std::pow(r_p, 2) / std::pow(epsilon, 2);
-  
-  std::vector <double> ro_g(Ngrid+1);
-  std::vector <double> kinetic_term(Ngrid+1);
-  std::vector <double> dPdx(Ngrid+1);
-  std::vector <double> p_dum(Ngrid+1); 
-  std::copy(Pnew.begin(), Pnew.end(), p_dum.begin());
-
-  for (size_t i = 0; i < Ngrid+1; ++i)
+  if (!my_vec.empty())
   {
-    double sum = 0.0;
-    for(size_t j = 0; j < Ncomp; ++j)
+    // For inlet node
+    my_vec_out[0] = my_vec[0];
+
+    // For outlet node
+    if (is_pressure)
     {
-      sum += (MW[j] * ynew[i * Ncomp + j]);
-    }
-    if (p_dum[i]<=0.0){
-      throw std::runtime_error("Error: Pressure becoming zero\n"); 
-    }
-    ro_g[i] = p_dum[i]*p_total / R / Tnew[i] / T_gas;
-    kinetic_term[i] = (ro_g[i] * sum) * (1.75*(1-epsilon)) / 2.0 / r_p / epsilon;
-  }
-
-  // Calculate Inlet pressure using inlet velocity and 2nd grid point pressure
-  // based on Ergun's equation
-  double sum = 0.0;
-  for(size_t j = 0; j < Ncomp; ++j)
-  {
-    sum += (MW[j] * ynew[0 * Ncomp + j]);
-  }
- 
-  // p_dum[0] = p_dum[1] + (vis_term*v_in + kinetic_term[1]*std::pow(v_in, 2.0))*dx;
-  p_dum[0] = ((vis_term*v_in*dx*L/p_total) + p_dum[1]) 
-          / (1.0 - (dx*L/R/Tnew[0]/T_gas)*sum*((1.75*(1-epsilon))/2.0/r_p/epsilon)*std::pow(v_in, 2.0));
-  if (p_dum[p_dum.size()-1] > p_dum[p_dum.size()-2]){
-    p_dum[p_dum.size()-1] = p_dum[p_dum.size()-2];
-  }
-
-  // Pressure gradient
-  dPdx[0] = 0.0;      // Inlet grid point
-  for(size_t i = 1; i < Ngrid+1; ++i)
-  {
-    dPdx[i] = (p_dum[i] - p_dum[i-1]) * idx;
-  }
-
-  // Calculate Velocity based on Ergun's equation
-  Vnew[0] = v_in/v_in;     // first grid point
-  
-  int v_sign;
-  for(size_t i = 1; i < Ngrid+1; ++i)
-  {  
-    if (dPdx[i] <= 0.0)
-    {
-      v_sign = 1.0;
+      if (my_vec[Ngrid] >= 1.0)
+      {
+        my_vec_out[Ngrid] = 1.0;
+      }
+      else
+      {
+        my_vec_out[Ngrid] = my_vec[Ngrid];
+      }
     }
     else
     {
-      v_sign = -1.0;
+      my_vec_out[Ngrid] = my_vec[Ngrid];
     }
-    
-    Vnew[i] = v_sign * (-vis_term + std::pow(
-              (std::abs(std::pow(vis_term, 2) + 4.0 * kinetic_term[i] * std::abs(dPdx[i]*p_total/L))), 0.5))
-              / 2.0 / kinetic_term[i] / v_in;
-    if (std::isnan(Vnew[i]))
-    {
-      std::cout << "Nan encountered" << std::endl;
-    } 
   }
   
-  // middle gridpoints
-  // for(size_t i = 1; i < Ngrid; ++i)  
-  // {
-    
-    // // sum = derivative at the actual gridpoint i
-    // double sum = 0.0;
-    // for(size_t j = 0; j < Ncomp; ++j)
-    // {
-    //   sum = sum - prefactor[j] * (Qeqnew[i * Ncomp + j] - Qnew[i * Ncomp + j]) +
-    //         components[j].D * (Pnew[(i - 1) * Ncomp + j] - 2.0 * Pnew[i * Ncomp + j] + Pnew[(i + 1) * Ncomp + j]) * idx2;
-    // }
+  // For right walls of 2nd to Ngrid-1 node
+  for(size_t i=1; i<Ngrid; ++i)
+  {
+    my_vec_out[i] = my_vec[i];
+  }
+
+  return my_vec_out;
+}
+
+// Function to calculate WENO based values at node walls
+std::vector <double> Breakthrough::compute_WENO(std::vector <double> &my_vec, bool is_pressure)
+{
+  double tol = 1e-10;           // Tolerance value in WENO scheme
+  double alpha_0 = 0.0;
+  double alpha_1 = 0.0;
+  double first_term = 0.0;
+  double second_term = 0.0;
+
+  // Vector to store computed values at the wall, the size of the vector is (Ngrid+1), including inlet and outlet. 
+  std::vector <double> my_vec_out(Ngrid+1, 0.0);
+
+  if (!my_vec.empty())
+  {
+    // For inlet node
+    my_vec_out[0] = my_vec[0];
+
+    // For outlet node
+    if (is_pressure)
+    {
+      if (my_vec[Ngrid] >= 1.0)
+      {
+        my_vec_out[Ngrid] = 1.0;
+      }
+      else
+      {
+        my_vec_out[Ngrid] = my_vec[Ngrid];
+      }
+    }
+    else
+    {
+      my_vec_out[Ngrid] = my_vec[Ngrid];
+    }
+  }
   
-    // // explicit version
-    // Vnew[i] = Vnew[i - 1] + dx * (sum - Vnew[i - 1] * dptdx) / Pt[i];
-  // }
+  // For right wall of 1st Node, alpha_1 and second term values are calculated using half-cell approximation
+  alpha_0 = (2.0/3.0) / std::pow((my_vec[2] - my_vec[1] + tol), 4.0);
+  alpha_1 = (1.0/3.0) / std::pow((2.0*(my_vec[1] - my_vec[0]) + tol), 4.0);
+
+  first_term = (alpha_0 / (alpha_0 + alpha_1))  * ((1.0/2.0) * (my_vec[1] + my_vec[2]));
+  second_term = (alpha_1 / (alpha_0 + alpha_1)) * (2.0 * my_vec[1] - my_vec[0]);
+  my_vec_out[1] = first_term + second_term;
+
+  // For right walls of 2nd to Ngrid-1 node
+  for(size_t i=2; i<Ngrid; ++i)
+  {
+    alpha_0 = (2.0/3.0) / std::pow((my_vec[i+1] - my_vec[i] + tol), 4.0);
+    alpha_1 = (1.0/3.0) / std::pow((my_vec[i] - my_vec[i-1] + tol), 4.0);
+
+    first_term = (alpha_0 / (alpha_0 + alpha_1))  * ((1.0/2.0) * (my_vec[i] + my_vec[i+1]));
+    second_term = (alpha_1 / (alpha_0 + alpha_1))  
+                  * ((3.0/2.0) * my_vec[i] - (1.0/2.0) * my_vec[i-1]);
+    my_vec_out[i] = first_term + second_term;
+  }
+
+  return my_vec_out;
+}
+
+// Function to calculate TVD Van Leer based values at node walls
+std::vector <double> Breakthrough::compute_TVD(std::vector <double> &my_vec, bool is_pressure)
+{
+  double tol = 1e-10;           // Tolerance value in TVD scheme
+  double r_value = 0.0;
+  double flux_limiter = 0.0;
+
+  // Vector to store computed values at the wall, the size of the vector is (Ngrid+1), including inlet and outlet. 
+  std::vector <double> my_vec_out(Ngrid+1, 0.0);
+
+  if (!my_vec.empty())
+  {
+    // For inlet node
+    my_vec_out[0] = my_vec[0];
+
+    // For outlet node
+    if (is_pressure)
+    {
+      if (my_vec[Ngrid] >= 1.0)
+      {
+        my_vec_out[Ngrid] = 1.0;
+      }
+      else
+      {
+        my_vec_out[Ngrid] = my_vec[Ngrid];
+      }
+    }
+    else
+    {
+      my_vec_out[Ngrid] = my_vec[Ngrid];
+    }
+  }
   
-  // last grid point
-  // double sum = 0.0;
-  // for(size_t j = 0; j < Ncomp; ++j)
-  // {
-  //   sum = sum - prefactor[j] * (Qeqnew[Ngrid * Ncomp + j] - Qnew[Ngrid * Ncomp + j]) +
-  //         components[j].D * (Pnew[(Ngrid - 1) * Ncomp + j] - Pnew[Ngrid * Ncomp + j]) * idx2;
-  // }
-  
-  // // explicit version
-  // Vnew[Ngrid] = Vnew[Ngrid-1] + dx * (sum - Vnew[Ngrid - 1] * dptdx) / Pt[Ngrid];
+  // For right wall of 1st Node, r_value is calculated using half-cell approximation
+  r_value = (2.0*(my_vec[1] - my_vec[0]) + tol) / ((my_vec[2] - my_vec[1]) + tol);
+  flux_limiter = (r_value + std::abs(r_value)) / (1.0 + std::abs(r_value));
+
+  my_vec_out[1] = my_vec[1] + 0.5 * flux_limiter * (my_vec[2] - my_vec[1]);
+
+  // For right walls of 2nd to Ngrid-1 node
+  for(size_t i=2; i<Ngrid; ++i)
+  {
+    r_value = ((my_vec[i] - my_vec[i-1]) + tol) / ((my_vec[i+1] - my_vec[i]) + tol);
+    flux_limiter = (r_value + std::abs(r_value)) / (1.0 + std::abs(r_value));
+    my_vec_out[i] = my_vec[i] + 0.5 * flux_limiter * (my_vec[i+1] - my_vec[i]);
+  }
+
+  return my_vec_out;
 }
 
 std::string Breakthrough::repr() const
