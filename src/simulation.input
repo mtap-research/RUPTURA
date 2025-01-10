@@ -6,16 +6,16 @@ Temperature              298.15           // [K]    Feed Gas Temperature, scalin
 ColumnVoidFraction       0.4             // [-]
 ParticleDensity          520         // [kg/m^3]
 TotalPressure            10e05           // [Pa]    Total pressure, scaling variable for Pressure
-PressureGradient         0             // [Pa/m]
+PressureGradient         -100             // [Pa/m]
 ColumnEntranceVelocity   0.50             // [m/s]  Interstitial velocity, scaling variable for velocity and time
 ColumnLength             0.50             // [m]    Total pressure, scaling variable for step length and time
 
 // Run settings
-NumberOfTimeSteps       1000000
-PrintEvery              100
-WriteEvery              100
-TimeStep                1e-8
-NumberOfGridPoints      20
+NumberOfTimeSteps       auto
+PrintEvery              10000
+WriteEvery              100000
+TimeStep                3e-5
+NumberOfGridPoints      30
 MixturePredictionMethod IAST            // Not used
 
 Component 0 MoleculeName               Helium
