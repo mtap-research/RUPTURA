@@ -102,6 +102,16 @@ struct Breakthrough
     std::vector<double> cachedP0;  // cached hypothetical pressure
     std::vector<double> cachedPsi; // cached reduced grand potential over the column
     
+    // Vectors of size (Ngrid+1), used as a dummy variable for balance equations
+    std::vector<double> P_dum;
+    std::vector<double> y_dum;
+    std::vector<double> T_dum;
+
+    // Vectors of size (Ngrid), used to store values at the walls of the nodes
+    std::vector<double> Ph;
+    std::vector<double> yh;
+    std::vector<double> Th;
+
     // Properties and Parameters
     double K_z;                        // Thermal conductivity of gas [J/mol/K]
     double C_ps;                      // Heat capacity of adsorbent [J/kg/K]
@@ -127,22 +137,33 @@ struct Breakthrough
       Iterative = 1
     };
 
+    // void computeFirstDerivatives(std::vector<double> &dqdt,
+    //                              std::vector<double> &dpdt,
+    //                              std::vector<double> &dTdt,
+    //                              std::vector<double> &dydt,
+    //                              const std::vector<double> &q_eq,
+    //                              const std::vector<double> &q,
+    //                              const std::vector<double> &v,
+    //                              const std::vector<double> &p,
+    //                              const std::vector<double> &T_vec,
+    //                              const std::vector<double> &y_vec);
+
     void computeFirstDerivatives(std::vector<double> &dqdt,
                                  std::vector<double> &dpdt,
                                  std::vector<double> &dTdt,
                                  std::vector<double> &dydt,
                                  const std::vector<double> &q_eq,
                                  const std::vector<double> &q,
-                                 const std::vector<double> &v,
                                  const std::vector<double> &p,
-                                 const std::vector<double> &Temp,
+                                 const std::vector<double> &T_vec,
                                  const std::vector<double> &y_vec);
-                                //  const std::vector<double> &T_arg,
-                                //  const std::vector<double> &y_arg);
+
 
     void computeEquilibriumLoadings();
-
-    void computeVelocity();    
+    
+    std::vector <double> compute_UDS(std::vector <double> &my_vec, bool is_pressure);
+    std::vector <double> compute_WENO(std::vector <double> &my_vec, bool is_pressure);
+    std::vector <double> compute_TVD(std::vector <double> &my_vec, bool is_pressure);
     
     void createMovieScriptColumnV();
     void createMovieScriptColumnPt();
